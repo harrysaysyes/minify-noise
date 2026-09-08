@@ -26,8 +26,14 @@
     angleGain: 3.5,
 
     // Wave displacement — subtle vertical movement only
-    waveAmpX: 0,
     waveAmpY: 9,
+
+    // Field character (ported from the Radio wave kit, becalmed)
+    warp: 0.2,                 // domain warp — marbled, organic flow
+    drift: 0.008,              // whitney drift — rows slowly slide through alignment
+    gerstnerAmp: 4,            // gentle horizontal bunching toward crests
+    gerstnerWavelength: 260,
+    gerstnerSpeed: 0.28,
 
     // Cursor interaction
     influenceRadius: 300,
@@ -84,6 +90,11 @@
     }
   }
 
+  // Two octaves of simplex — the second adds fine grain
+  function fbm(a, b) {
+    return simplex.noise2D(a, b) + 0.5 * simplex.noise2D(a * 2.03 + 17.1, b * 2.11 + 9.2);
+  }
+
   // ===== UPDATE =====
   function update(deltaTime) {
     time += deltaTime * 0.001;
@@ -94,13 +105,15 @@
       const x  = pt.baseX;
       const y  = pt.baseY;
 
-      // Noise angle field
-      const t = config.angleGain * simplex.noise2D(
-        x * config.xScale + time * config.speedX,
-        y * config.yScale + time * config.speedY
-      );
-      pt.currentX = x + Math.cos(t) * config.waveAmpX + pt.cx * config.cursorXScale;
-      pt.currentY = y + Math.sin(t) * config.waveAmpY + pt.cy;
+      // Domain-warped two-octave field with per-row whitney drift
+      const rowFrac = grid.rows > 1 ? Math.floor(i / grid.cols) / (grid.rows - 1) : 0;
+      const u = x * config.xScale + time * config.speedX + rowFrac * config.drift * time;
+      const v = y * config.yScale + time * config.speedY;
+      const q = fbm(u + 5.2, v + 1.3);
+      const n = fbm(u + config.warp * q, v + config.warp * q) / 1.5;
+      const wy = Math.sin(config.angleGain * n) * config.waveAmpY;
+      const k  = 2 * Math.PI / config.gerstnerWavelength;
+      const wx = config.gerstnerAmp * Math.cos(k * x + time * config.gerstnerSpeed + rowFrac * 2.4);
 
       // Cursor velocity injection
       if (pointer.isActive) {
@@ -133,8 +146,8 @@
       pt.cx = Math.max(-config.maxCursorMoveY, Math.min(config.maxCursorMoveY, pt.cx));
       pt.cy = Math.max(-config.maxCursorMoveY, Math.min(config.maxCursorMoveY, pt.cy));
 
-      pt.currentX = pt.baseX + Math.cos(t) * config.waveAmpX + pt.cx * config.cursorXScale;
-      pt.currentY = pt.baseY + Math.sin(t) * config.waveAmpY + pt.cy;
+      pt.currentX = pt.baseX + wx + pt.cx * config.cursorXScale;
+      pt.currentY = pt.baseY + wy + pt.cy;
     }
   }
 
@@ -150,12 +163,18 @@
 
     for (let row = 0; row < grid.rows; row++) {
       context.beginPath();
-      const first = grid.points[row * grid.cols];
-      context.moveTo(first.currentX, first.currentY);
-      for (let col = 1; col < grid.cols; col++) {
-        const pt = grid.points[row * grid.cols + col];
-        context.lineTo(pt.currentX, pt.currentY);
+      const base = row * grid.cols;
+      context.moveTo(grid.points[base].currentX, grid.points[base].currentY);
+      for (let col = 1; col < grid.cols - 1; col++) {
+        const pt   = grid.points[base + col];
+        const next = grid.points[base + col + 1];
+        context.quadraticCurveTo(
+          pt.currentX, pt.currentY,
+          (pt.currentX + next.currentX) / 2, (pt.currentY + next.currentY) / 2
+        );
       }
+      const last = grid.points[base + grid.cols - 1];
+      context.lineTo(last.currentX, last.currentY);
       context.stroke();
     }
   }
